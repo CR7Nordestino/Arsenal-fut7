@@ -119,15 +119,25 @@ app.post("/api/login",(req,res)=>{
 });
 app.get("/api/me",auth,(req,res)=>res.json(req.user));
 app.get("/api/players",(req,res)=>res.json(db.prepare("SELECT * FROM players WHERE active=1 ORDER BY number,name").all()));
+
+
 app.get("/api/players/:id",(req,res)=>{
  const p=db.prepare("SELECT * FROM players WHERE id=?").get(req.params.id);
  if(!p) return res.status(404).json({error:"Atleta não encontrado."});
- const goals=db.prepare("SELECT COUNT(*) n FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.player_id=? AND e.type='goal' AND m.status='played'").get(p.id).n;
- const assists=db.prepare("SELECT COUNT(*) n FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.player_id=? AND e.type='assist' AND m.status='played'").get(p.id).n;
- const games=db.prepare("SELECT COUNT(*) n FROM attendance a JOIN matches m ON m.id=a.match_id WHERE a.player_id=? AND a.present=1 AND m.status='played'").get(p.id).n;
+
+ const historical=db.prepare("SELECT * FROM historical_player_stats WHERE id=?").get(p.id)||{games:0,goals:0,assists:0};
+
+ const goals=db.prepare("SELECT COUNT(*) n FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.player_id=? AND e.type='goal' AND m.status='played'").get(p.id).n+historical.goals;
+
+ const assists=db.prepare("SELECT COUNT(*) n FROM match_events e JOIN matches m ON m.id=e.match_id WHERE e.player_id=? AND e.type='assist' AND m.status='played'").get(p.id).n+historical.assists;
+
+ const games=db.prepare("SELECT COUNT(*) n FROM attendance a JOIN matches m ON m.id=a.match_id WHERE a.player_id=? AND a.present=1 AND m.status='played'").get(p.id).n+historical.games;
+
  const mvps=db.prepare("SELECT COUNT(*) n FROM match_mvp v JOIN matches m ON m.id=v.match_id WHERE v.player_id=? AND m.status='played'").get(p.id).n;
+
  res.json({...p,goals,assists,games,mvps,goalAverage:games?(goals/games).toFixed(2):"0.00"});
 });
+
 app.get("/api/stats",(req,res)=>res.json({season:stats("year"),allTime:stats("all")}));
 app.get("/api/rankings",(req,res)=>{
  const period=req.query.period==="all"?"all":"year";
