@@ -183,6 +183,24 @@ app.post("/api/matches",auth,allow("admin","coach"),(req,res)=>{
  const r=db.prepare("INSERT INTO matches(opponent,date,time,venue) VALUES(?,?,?,?)").run(opponent,date,time||"",venue||"");
  res.json({id:r.lastInsertRowid});
 });
+
+app.delete("/api/matches/:id",auth,allow("admin"),(req,res)=>{
+ const id=Number(req.params.id);
+ const match=db.prepare("SELECT id FROM matches WHERE id=?").get(id);
+ if(!match)return res.status(404).json({error:"Partida não encontrada."});
+
+ const remove=db.transaction(()=>{
+  db.prepare("DELETE FROM attendance WHERE match_id=?").run(id);
+  db.prepare("DELETE FROM match_events WHERE match_id=?").run(id);
+  db.prepare("DELETE FROM match_mvp WHERE match_id=?").run(id);
+  db.prepare("DELETE FROM fan_votes WHERE match_id=?").run(id);
+  db.prepare("DELETE FROM matches WHERE id=?").run(id);
+ });
+
+ remove();
+ res.json({ok:true});
+});
+
 app.put("/api/matches/:id/attendance",auth,allow("admin","coach"),(req,res)=>{
  const {playerIds=[]}=req.body||{}; const m=publicMatch(req.params.id); if(!m)return res.status(404).json({error:"Partida não encontrada."});
  const tx=db.transaction(()=>{
