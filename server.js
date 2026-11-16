@@ -139,18 +139,87 @@ app.get("/api/players/:id",(req,res)=>{
 });
 
 app.get("/api/stats",(req,res)=>res.json({season:stats("year"),allTime:stats("all")}));
+
 app.get("/api/rankings",(req,res)=>{
  const period=req.query.period==="all"?"all":"year";
  const year=new Date().getFullYear();
- const dateClause=period==="year"?"AND substr(m.date,1,4)=?":"";
- const args=period==="year"?[String(year)]:[];
- const rank=(type)=>db.prepare(`SELECT p.id,p.name,p.nickname,p.number,p.position,p.photo,COUNT(e.id) value,
- (SELECT COUNT(*) FROM attendance a JOIN matches mm ON mm.id=a.match_id WHERE a.player_id=p.id AND a.present=1 AND mm.status='played' ${period==="year"?"AND substr(mm.date,1,4)=?":""}) games
- FROM players p LEFT JOIN match_events e ON e.player_id=p.id AND e.type=? JOIN matches m ON m.id=e.match_id AND m.status='played' ${dateClause}
- WHERE p.active=1 GROUP BY p.id ORDER BY value DESC,p.name`).all(...(period==="year"?[String(year),type,String(year)]:[type]));
- const mvps=db.prepare(`SELECT p.id,p.name,p.nickname,p.number,p.position,p.photo,COUNT(m.id) value FROM players p LEFT JOIN match_mvp v ON v.player_id=p.id LEFT JOIN matches m ON m.id=v.match_id AND m.status='played' ${period==="year"?"AND substr(m.date,1,4)=?":""} WHERE p.active=1 GROUP BY p.id ORDER BY value DESC,p.name`).all(...(period==="year"?[String(year)]:[]));
- res.json({goals:rank("goal"),assists:rank("assist"),mvps});
+
+ const rank=(type)=>{
+  const historicalColumn=type==="goal"?"goals":"assists";
+  const includeHistorical=period==="all";
+
+  const eventDate=period==="year"?"AND substr(m.date,1,4)=?":"";
+  const attendanceDate=period==="year"?"AND substr(mm.date,1,4)=?":"";
+
+  const historicalGoals=includeHistorical
+   ? `+ COALESCE((SELECT hs.${historicalColumn} FROM historical_player_stats hs WHERE hs.id=p.id),0)`
+   : "";
+
+  const historicalGames=includeHistorical
+   ? `+ COALESCE((SELECT hs.games FROM historical_player_stats hs WHERE hs.id=p.id),0)`
+   : "";
+
+  const sql=`
+   SELECT p.id,p.name,p.nickname,p.number,p.position,p.photo,
+
+   (
+    COALESCE((
+     SELECT COUNT(*)
+     FROM match_events e
+     JOIN matches m ON m.id=e.match_id
+     WHERE e.player_id=p.id
+     AND e.type=?
+     AND m.status='played'
+     ${eventDate}
+    ),0)
+    ${historicalGoals}
+   ) value,
+
+   (
+    COALESCE((
+     SELECT COUNT(*)
+     FROM attendance a
+     JOIN matches mm ON mm.id=a.match_id
+     WHERE a.player_id=p.id
+     AND a.present=1
+     AND mm.status='played'
+     ${attendanceDate}
+    ),0)
+    ${historicalGames}
+   ) games
+
+   FROM players p
+   WHERE p.active=1
+   ORDER BY value DESC,p.name
+  `;
+
+  const params=period==="year"
+   ? [type,String(year),String(year)]
+   : [type];
+
+  return db.prepare(sql).all(...params);
+ };
+
+ const mvps=db.prepare(`
+  SELECT p.id,p.name,p.nickname,p.number,p.position,p.photo,
+  COUNT(m.id) value
+  FROM players p
+  LEFT JOIN match_mvp v ON v.player_id=p.id
+  LEFT JOIN matches m ON m.id=v.match_id
+  AND m.status='played'
+  ${period==="year"?"AND substr(m.date,1,4)=?":""}
+  WHERE p.active=1
+  GROUP BY p.id
+  ORDER BY value DESC,p.name
+ `).all(...(period==="year"?[String(year)]:[]));
+
+ res.json({
+  goals:rank("goal"),
+  assists:rank("assist"),
+  mvps
+ });
 });
+
 app.get("/api/matches",(req,res)=>{
  const rows=db.prepare("SELECT * FROM matches ORDER BY date DESC,time DESC").all();
  res.json(rows.map(m=>({...m,related:db.prepare("SELECT p.id,p.name,p.nickname,p.number,p.photo,a.present FROM attendance a JOIN players p ON p.id=a.player_id WHERE a.match_id=? AND a.present=1 ORDER BY p.number").all(m.id)})));
